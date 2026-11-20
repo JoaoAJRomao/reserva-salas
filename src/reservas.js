@@ -5,6 +5,29 @@ import { salaExiste } from './salas.js';
 
 const CAMPOS_OBRIGATORIOS = ['sala', 'inicio', 'fim', 'responsavel'];
 
+// CA-4: ISO 8601 com hora e fuso obrigatórios (Z ou ±hh:mm). Sem fuso o JS adivinharia o do servidor.
+// Captura ano, mês, dia e hora para o CA-5.
+const ISO_COM_FUSO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+// CA-4 + CA-5: formato ISO com fuso e data que existe no calendário.
+// O JS "corrige" 30/02 para 02/03 e 24:00 para o dia seguinte; aqui isso vira erro.
+function dataValida(texto) {
+  const partes = typeof texto === 'string' ? ISO_COM_FUSO.exec(texto) : null;
+  if (!partes) return false;
+  const [ano, mes, dia, hora] = partes.slice(1, 5).map(Number);
+  const calendario = new Date(0);
+  calendario.setUTCFullYear(ano, mes - 1, dia); // setUTCFullYear não trata anos 0–99 como 19xx
+  return hora <= 23 && calendario.getUTCDate() === dia;
+}
+
+// Fuso da faculdade, usado só para exibir mensagens (o Brasil não tem horário de verão desde 2019).
+const FUSO_EXIBICAO = { rotulo: '-03:00', minutos: -180 };
+
+function formatarNoFusoDaFaculdade(iso) {
+  const deslocado = new Date(new Date(iso).getTime() + FUSO_EXIBICAO.minutos * 60_000);
+  return deslocado.toISOString().slice(0, 19) + FUSO_EXIBICAO.rotulo;
+}
+
 /**
  * Tenta criar uma reserva.
  * @param {Array} reservas  reservas que já existem
@@ -17,18 +40,27 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
 
   if (!salaExiste(pedido.sala)) return { status: 404, erro: `Sala não encontrada: ${pedido.sala}` };
 
+  const formatoOk = dataValida(pedido.inicio) && dataValida(pedido.fim);
   const inicio = new Date(pedido.inicio);
   const fim = new Date(pedido.fim);
-  if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
-    return { status: 400, erro: 'Datas inválidas: use ISO 8601, ex.: 2026-12-01T14:00:00-03:00' };
+  if (!formatoOk || Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
+    return { status: 400, erro: 'Datas inválidas: use ISO 8601 com fuso, ex.: 2026-12-01T14:00:00-03:00' };
   }
   if (fim <= inicio) return { status: 400, erro: 'O fim precisa ser depois do início' };
 
-  // TODO CA-3 (SPEC-001): reserva que começa no passado é recusada com 400. (Lab 1)
-  // TODO CA-2 (SPEC-001): conflito de horário na mesma sala é recusado com 409. (Lab 3, teste antes!)
+  // CA-3 (SPEC-001): só é passado se inicio < agora; começar neste instante é permitido.
+  if (inicio < agora) return { status: 400, erro: 'A reserva não pode começar no passado' };
+
+  // CA-2 (SPEC-001): sobreposição na mesma sala é 409. Horário encostado (fim == início) não conflita.
+  const conflito = reservas.find(
+    (r) => r.sala === pedido.sala && inicio < new Date(r.fim) && fim > new Date(r.inicio),
+  );
+  if (conflito) {
+    return { status: 409, erro: `Conflito: ${pedido.sala} já está reservada de ${formatarNoFusoDaFaculdade(conflito.inicio)} até ${formatarNoFusoDaFaculdade(conflito.fim)}` };
+  }
 
   const reserva = {
-    id: reservas.length + 1,
+    id: reservas.reduce((maior, r) => Math.max(maior, r.id), 0) + 1, // não repete id mesmo com reservas removidas
     sala: pedido.sala,
     inicio: inicio.toISOString(),
     fim: fim.toISOString(),
