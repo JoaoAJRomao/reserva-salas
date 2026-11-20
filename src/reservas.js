@@ -49,7 +49,12 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
   if (fim <= inicio) return { status: 400, erro: 'O fim precisa ser depois do início' };
 
   // CA-3 (SPEC-001): só é passado se inicio < agora; começar neste instante é permitido.
-  if (inicio < agora) return { status: 400, erro: 'A reserva não pode começar no passado' };
+  if (inicio < agora) {
+    return {
+      status: 400,
+      erro: `A reserva não pode começar no passado: agora são ${formatarNoFusoDaFaculdade(agora)}. Escolha um início a partir deste horário.`,
+    };
+  }
 
   // CA-2 (SPEC-001): sobreposição na mesma sala é 409. Horário encostado (fim == início) não conflita.
   const conflito = reservas.find(

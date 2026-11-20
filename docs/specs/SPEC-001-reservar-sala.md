@@ -1,6 +1,6 @@
 # SPEC-001 · Reservar sala
 
-- **Situação:** aprovada · CA-1 pronto · CA-3 no Lab 1 · CA-2 no Lab 3
+- **Situação:** aprovada 
 - **Dono:** coordenação do curso
 
 ## Problema
@@ -17,6 +17,7 @@ Professores (fazem a reserva) e secretaria (consulta a agenda). Cerca de 80 prof
   Outra sala no mesmo horário **não** é conflito. A mensagem do conflito mostra o horário da reserva
   existente no fuso da faculdade (`-03:00`), ex.: `2026-12-01T14:00:00-03:00`.
 - **CA-3** · Dado o horário atual, quando peço uma reserva que começa no passado, então recebo 400.
+  A mensagem informa a hora atual no fuso da faculdade (`-03:00`) e orienta a escolher um início a partir dela.
 - **CA-4** · Dado um pedido com data sem fuso (ex.: `2026-12-01T14:00:00`), quando tento reservar, então recebo 400.
 - **CA-5** · Dado um pedido com data que não existe no calendário (ex.: 30 de fevereiro, 31 de abril, `24:00`),
   quando tento reservar, então recebo 400. A data não é "corrigida" para outro dia. 29 de fevereiro só existe em ano bissexto.
