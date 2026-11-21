@@ -29,6 +29,20 @@ function formatarNoFusoDaFaculdade(iso) {
 }
 
 /**
+ * Lista as reservas, com filtro opcional por sala (SPEC-004).
+ * @param {Array} reservas  reservas que já existem
+ * @param {object} filtro   { salas } com os valores do parâmetro ?sala= ([] = sem filtro)
+ */
+export function listarReservas(reservas, { salas = [] } = {}) {
+  if (salas.length === 0) return { status: 200, reservas }; // CA-4
+  if (salas.length > 1) return { status: 400, erro: 'Informe uma única sala' }; // CA-7
+  const [sala] = salas;
+  // CA-3, CA-5, CA-6: o id é exato; vazio e maiúsculas não existem.
+  if (!salaExiste(sala)) return { status: 404, erro: `Sala não encontrada: ${sala}` };
+  return { status: 200, reservas: reservas.filter((r) => r.sala === sala) }; // CA-1, CA-2
+}
+
+/**
  * Tenta criar uma reserva.
  * @param {Array} reservas  reservas que já existem
  * @param {object} pedido   { sala, inicio, fim, responsavel } com datas em ISO 8601
