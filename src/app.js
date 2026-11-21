@@ -1,7 +1,7 @@
 // Camada HTTP: só traduz requisição em chamada de função e resultado em resposta.
 // A regra de negócio mora em reservas.js.
 import { SALAS } from './salas.js';
-import { criarReserva } from './reservas.js';
+import { criarReserva, listarReservas } from './reservas.js';
 
 export function criarApp({ agora = () => new Date() } = {}) {
   const reservas = [];
@@ -10,7 +10,10 @@ export function criarApp({ agora = () => new Date() } = {}) {
     const url = new URL(req.url, 'http://localhost');
     try {
       if (req.method === 'GET' && url.pathname === '/salas') return responder(res, 200, SALAS);
-      if (req.method === 'GET' && url.pathname === '/reservas') return responder(res, 200, reservas);
+      if (req.method === 'GET' && url.pathname === '/reservas') {
+        const resultado = listarReservas(reservas, { salas: url.searchParams.getAll('sala') });
+        return responder(res, resultado.status, resultado.reservas ?? { erro: resultado.erro });
+      }
       if (req.method === 'POST' && url.pathname === '/reservas') {
         const pedido = await lerJson(req);
         const resultado = criarReserva(reservas, pedido, agora());

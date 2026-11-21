@@ -1,7 +1,7 @@
 // Testes das regras de reserva. Cada teste cita o critério de aceite (CA) da SPEC que ele prova.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { criarReserva } from '../src/reservas.js';
+import { criarReserva, listarReservas } from '../src/reservas.js';
 
 const AGORA = new Date('2026-12-01T08:00:00-03:00');
 const pedido = (extra = {}) => ({
@@ -201,4 +201,56 @@ test('id: não repete id depois de cancelamentos', () => {
   const r = criarReserva(lista, pedido(), AGORA);
   assert.equal(r.status, 201);
   assert.equal(r.reserva.id, 4);
+});
+
+// SPEC-004: filtrar reservas por sala. `salas` é a lista de valores do parâmetro ?sala=
+// ([] = parâmetro ausente, [''] = ?sala=, ['lab-1', 'lab-2'] = parâmetro repetido).
+const reservasEmDuasSalas = () => {
+  const lab = criarReserva([], pedido(), AGORA).reserva;
+  const aud = criarReserva([lab], pedido({ sala: 'auditorio' }), AGORA).reserva;
+  return [lab, aud];
+};
+
+test('SPEC-004 CA-1: filtrar por sala devolve só as reservas daquela sala', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: ['lab-1'] });
+  assert.equal(r.status, 200);
+  assert.equal(r.reservas.length, 1);
+  assert.equal(r.reservas[0].sala, 'lab-1');
+  assert.deepEqual(Object.keys(r.reservas[0]).sort(), ['fim', 'id', 'inicio', 'responsavel', 'sala']);
+});
+
+test('SPEC-004 CA-2: sala que existe e não tem reservas devolve 200 e lista vazia', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: ['lab-2'] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.reservas, []);
+});
+
+test('SPEC-004 CA-3: sala inexistente devolve 404 com a mensagem', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: ['sala-x'] });
+  assert.equal(r.status, 404);
+  assert.equal(r.erro, 'Sala não encontrada: sala-x');
+});
+
+test('SPEC-004 CA-4: sem o parâmetro sala devolve todas as reservas', () => {
+  const todas = reservasEmDuasSalas();
+  const r = listarReservas(todas, { salas: [] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.reservas, todas);
+});
+
+test('SPEC-004 CA-5: parâmetro sala vazio devolve 404 e não a lista completa', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: [''] });
+  assert.equal(r.status, 404);
+  assert.match(r.erro, /Sala não encontrada/);
+});
+
+test('SPEC-004 CA-6: o id da sala é exato, LAB-1 não é lab-1', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: ['LAB-1'] });
+  assert.equal(r.status, 404);
+});
+
+test('SPEC-004 CA-7: parâmetro sala repetido devolve 400', () => {
+  const r = listarReservas(reservasEmDuasSalas(), { salas: ['lab-1', 'lab-2'] });
+  assert.equal(r.status, 400);
+  assert.equal(r.erro, 'Informe uma única sala');
 });
