@@ -1,6 +1,6 @@
 # SPEC-004 · Filtrar reservas por sala
 
-- **Situação:** rascunho
+- **Situação:** aprovada
 - **Dono:** coordenação do curso (a confirmar)
 
 ## Problema
@@ -28,7 +28,7 @@ Filtrar por mais de uma sala ao mesmo tempo (`?sala=lab-1,lab-2`), filtrar por d
 ordenação, paginação, cache, cancelamento (SPEC-002), persistência (SPEC-003).
 
 ## Riscos e perguntas
-Decididas nesta versão, a confirmar com o dono:
+Decididas e confirmadas:
 - `?sala=` vazio devolve 404 em vez de listar tudo, para que um erro de digitação não devolva todas as salas em silêncio.
 - O id da sala é comparado de forma exata. Espaços antes ou depois (`lab-1%20`) fazem a sala não existir (404); nada é cortado.
 - O filtro devolve também reservas já passadas: ele não olha o horário, só a sala.
