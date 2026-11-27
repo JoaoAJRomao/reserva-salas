@@ -39,4 +39,4 @@ Inclui o trabalho na SPEC-005, feito com o agente em 26 e 27/11/2026.
 **Custo e tempo:** US$ 3,99 (/cost) · 160 minutos de sessão (wall: 2h40min), dos quais o tempo de API foi de 16min31s
 
 **O que faríamos diferente:**
-- Dar exemplos de casos poderia ter facilitado o trabalho no momento de criar o casos de aceite.
+- Dar exemplos de casos poderia ter facilitado o trabalho no momento de criar os casos de aceite.
