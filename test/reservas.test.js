@@ -254,3 +254,150 @@ test('SPEC-004 CA-7: parâmetro sala repetido devolve 400', () => {
   assert.equal(r.status, 400);
   assert.equal(r.erro, 'Informe uma única sala');
 });
+
+// SPEC-005: limitar a duração da reserva. Salvo indicação, agora é 30/11 às 08h e o responsável é Ana.
+// As reservas existentes são objetos prontos, para o teste não depender da regra que está testando.
+const AGORA_005 = new Date('2026-11-30T08:00:00-03:00');
+const MENSAGEM_A = 'Reserva não realizada por período acima de 4 horas';
+const MENSAGEM_B = 'Reserva não realizada: você já tem uma reserva nesta sala em seguida';
+
+// 'HH:MM' vira 01/12 em -03:00; um texto completo é usado como está.
+const instante = (t) => (t.length === 5 ? `2026-12-01T${t}:00-03:00` : t);
+const guardada = (inicio, fim, responsavel = 'Ana', sala = 'lab-1') => ({
+  id: 1, sala, responsavel,
+  inicio: new Date(instante(inicio)).toISOString(),
+  fim: new Date(instante(fim)).toISOString(),
+});
+const pedir = (inicio, fim, { lista = [], responsavel = 'Ana', sala = 'lab-1', agora = AGORA_005 } = {}) =>
+  criarReserva(lista, { sala, responsavel, inicio: instante(inicio), fim: instante(fim) }, agora);
+
+const aceita = (r) => assert.equal(r.status, 201, r.erro);
+const recusada = (r, status, mensagem) => {
+  assert.equal(r.status, status);
+  assert.equal(r.erro, mensagem);
+  assert.equal(r.reserva, undefined);
+};
+
+test('SPEC-005 CA-1: 4h exatas são aceitas', () => {
+  aceita(pedir('08:00', '12:00'));
+});
+
+test('SPEC-005 CA-2: 4h e 1s recebem 400 com a mensagem A', () => {
+  recusada(pedir('08:00', '2026-12-01T12:00:01-03:00'), 400, MENSAGEM_A);
+});
+
+test('SPEC-005 CA-3: 4h reais com fusos diferentes são aceitas', () => {
+  aceita(pedir('08:00', '2026-12-01T15:00:00+00:00'));
+});
+
+test('SPEC-005 CA-4: 5h reais com fusos diferentes recebem 400', () => {
+  recusada(pedir('08:00', '2026-12-01T11:00:00-05:00'), 400, MENSAGEM_A);
+});
+
+test('SPEC-005 CA-5: 4h cruzando a meia-noite são aceitas', () => {
+  aceita(pedir('22:00', '2026-12-02T02:00:00-03:00'));
+});
+
+test('SPEC-005 CA-6: 5h cruzando a meia-noite recebem 400', () => {
+  recusada(pedir('22:00', '2026-12-02T03:00:00-03:00'), 400, MENSAGEM_A);
+});
+
+test('SPEC-005 CA-7: acima de 4h e sobreposto recebe o 400 da duração, não o 409', () => {
+  recusada(pedir('12:00', '17:00', { lista: [guardada('14:00', '15:00')] }), 400, MENSAGEM_A);
+});
+
+test('SPEC-005 CA-8: encostada depois que soma 5h recebe 409 com a mensagem B', () => {
+  recusada(pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00')] }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-9: encostada antes que soma 5h recebe 409 com a mensagem B', () => {
+  recusada(pedir('11:00', '12:00', { lista: [guardada('12:00', '16:00')] }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-10: encostadas que somam 4h exatas são aceitas', () => {
+  aceita(pedir('10:00', '12:00', { lista: [guardada('08:00', '10:00')] }));
+});
+
+test('SPEC-005 CA-11: encostada de outro responsável é aceita', () => {
+  aceita(pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00')], responsavel: 'Bruno' }));
+});
+
+test('SPEC-005 CA-12: horário encostado em outra sala é aceito', () => {
+  aceita(pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00')], sala: 'lab-2' }));
+});
+
+test('SPEC-005 CA-13: no passado e acima de 4h recebe o erro do passado', () => {
+  recusada(
+    pedir('08:00', '13:00', { agora: new Date('2026-12-01T09:00:00-03:00') }),
+    400,
+    'A reserva não pode começar no passado: agora são 2026-12-01T09:00:00-03:00. Escolha um início a partir deste horário.',
+  );
+});
+
+test('SPEC-005 CA-14: sequência de três reservas que soma 5h recebe 409', () => {
+  const lista = [guardada('08:00', '10:00'), guardada('10:00', '12:00')];
+  recusada(pedir('12:00', '13:00', { lista }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-15: pedido que une duas reservas e soma 5h recebe 409', () => {
+  const lista = [guardada('08:00', '10:00'), guardada('12:00', '13:00')];
+  recusada(pedir('10:00', '12:00', { lista }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-16: minúscula e espaço no fim são a mesma pessoa', () => {
+  recusada(pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00')], responsavel: 'ana ' }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-17: sobreposição vem antes da reserva encostada', () => {
+  const lista = [guardada('08:00', '12:00'), guardada('13:00', '14:00', 'Bruno')];
+  recusada(
+    pedir('12:00', '13:30', { lista }),
+    409,
+    'Conflito: lab-1 já está reservada de 2026-12-01T13:00:00-03:00 até 2026-12-01T14:00:00-03:00',
+  );
+});
+
+test('SPEC-005 CA-18: reserva de outro professor interrompe a sequência', () => {
+  const lista = [guardada('08:00', '10:00'), guardada('10:00', '11:00', 'Bruno')];
+  aceita(pedir('11:00', '14:00', { lista }));
+});
+
+test('SPEC-005 CA-19: pedido que une duas reservas e soma 4h exatas é aceito', () => {
+  const lista = [guardada('08:00', '09:00'), guardada('11:00', '12:00')];
+  aceita(pedir('09:00', '11:00', { lista }));
+});
+
+test('SPEC-005 CA-20: encostada escrita em outro fuso recebe 409', () => {
+  const lista = [guardada('08:00', '12:00')];
+  recusada(pedir('2026-12-01T15:00:00Z', '2026-12-01T16:00:00Z', { lista }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-21: 4h e 1 milissegundo recebem 400', () => {
+  recusada(pedir('08:00', '2026-12-01T12:00:00.001-03:00'), 400, MENSAGEM_A);
+});
+
+test('SPEC-005 CA-22: responsável numérico também é comparado', () => {
+  const lista = [guardada('08:00', '12:00', 123)];
+  recusada(pedir('12:00', '13:00', { lista, responsavel: 123 }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-23: espaço no início não muda a pessoa', () => {
+  recusada(pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00')], responsavel: ' Ana' }), 409, MENSAGEM_B);
+});
+
+test('SPEC-005 CA-24: acento diferencia as pessoas, e o nome é guardado sem mudança', () => {
+  const r = pedir('12:00', '13:00', { lista: [guardada('08:00', '12:00', 'João')], responsavel: 'Joao' });
+  aceita(r);
+  assert.equal(r.reserva.responsavel, 'Joao');
+  // "Decididas": a comparação ignora maiúsculas e espaços, mas o valor guardado não muda.
+  assert.equal(pedir('08:00', '09:00', { responsavel: ' Ana ' }).reserva.responsavel, ' Ana ');
+});
+
+test('SPEC-005 CA-25: fração abaixo de 1 milissegundo é ignorada', () => {
+  aceita(pedir('08:00', '2026-12-01T12:00:00.0001-03:00'));
+});
+
+test('SPEC-005 CA-26: encostadas na virada do dia que somam 5h recebem 409', () => {
+  const lista = [guardada('21:00', '2026-12-02T00:00:00-03:00')];
+  recusada(pedir('2026-12-02T00:00:00-03:00', '2026-12-02T02:00:00-03:00', { lista }), 409, MENSAGEM_B);
+});

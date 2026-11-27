@@ -95,3 +95,52 @@ test('SPEC-004 CA-7: GET /reservas?sala=lab-1&sala=lab-2 devolve 400', async () 
   assert.equal(resp.status, 400);
   assert.equal((await resp.json()).erro, 'Informe uma única sala');
 });
+
+// SPEC-005: o que foi recusado não pode aparecer em GET /reservas. Cada teste sobe o próprio servidor,
+// com o "agora" da SPEC, para não misturar reservas com os testes acima.
+const conferirRecusa = async ({ existentes = [], pedido, status, mensagem }) => {
+  const proprio = createServer(criarApp({ agora: () => new Date('2026-11-30T08:00:00-03:00') }));
+  await new Promise((ok) => proprio.listen(0, ok));
+  const url = `http://localhost:${proprio.address().port}/reservas`;
+  // 'HH:MM' vira 01/12 em -03:00; um texto completo é usado como está.
+  const instante = (t) => (t.length === 5 ? `2026-12-01T${t}:00-03:00` : t);
+  const enviar = ([inicio, fim, responsavel = 'Ana']) =>
+    fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sala: 'lab-1', inicio: instante(inicio), fim: instante(fim), responsavel }),
+    });
+  try {
+    for (const existente of existentes) assert.equal((await enviar(existente)).status, 201);
+    const antes = await (await fetch(url)).json();
+    const resp = await enviar(pedido);
+    assert.equal(resp.status, status);
+    assert.equal((await resp.json()).erro, mensagem);
+    assert.deepEqual(await (await fetch(url)).json(), antes);
+  } finally {
+    proprio.close();
+  }
+};
+
+const A = { status: 400, mensagem: 'Reserva não realizada por período acima de 4 horas' };
+const B = { status: 409, mensagem: 'Reserva não realizada: você já tem uma reserva nesta sala em seguida' };
+const casos = [
+  ['CA-2', { ...A, pedido: ['08:00', '2026-12-01T12:00:01-03:00'] }],
+  ['CA-8', { ...B, existentes: [['08:00', '12:00']], pedido: ['12:00', '13:00'] }],
+  ['CA-9', { ...B, existentes: [['12:00', '16:00']], pedido: ['11:00', '12:00'] }],
+  ['CA-14', { ...B, existentes: [['08:00', '10:00'], ['10:00', '12:00']], pedido: ['12:00', '13:00'] }],
+  ['CA-15', { ...B, existentes: [['08:00', '10:00'], ['12:00', '13:00']], pedido: ['10:00', '12:00'] }],
+  ['CA-16', { ...B, existentes: [['08:00', '12:00']], pedido: ['12:00', '13:00', 'ana '] }],
+  ['CA-20', { ...B, existentes: [['08:00', '12:00']], pedido: ['2026-12-01T15:00:00Z', '2026-12-01T16:00:00Z'] }],
+  ['CA-21', { ...A, pedido: ['08:00', '2026-12-01T12:00:00.001-03:00'] }],
+  ['CA-22', { ...B, existentes: [['08:00', '12:00', 123]], pedido: ['12:00', '13:00', 123] }],
+  ['CA-23', { ...B, existentes: [['08:00', '12:00']], pedido: ['12:00', '13:00', ' Ana'] }],
+  ['CA-26', {
+    ...B,
+    existentes: [['21:00', '2026-12-02T00:00:00-03:00']],
+    pedido: ['2026-12-02T00:00:00-03:00', '2026-12-02T02:00:00-03:00'],
+  }],
+];
+for (const [ca, caso] of casos) {
+  test(`SPEC-005 ${ca}: pela API, a recusa não aparece em GET /reservas`, () => conferirRecusa(caso));
+}
