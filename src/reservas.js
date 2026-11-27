@@ -1,4 +1,4 @@
-// Regras de reserva de salas (SPEC-001).
+// Regras de reserva de salas (SPEC-001, SPEC-004 e SPEC-005).
 // Funções puras: recebem os dados e devolvem um resultado { status, reserva | erro }.
 // Não leem relógio nem banco por conta própria, por isso são fáceis de testar.
 import { salaExiste } from './salas.js';
@@ -26,6 +26,30 @@ const FUSO_EXIBICAO = { rotulo: '-03:00', minutos: -180 };
 function formatarNoFusoDaFaculdade(iso) {
   const deslocado = new Date(new Date(iso).getTime() + FUSO_EXIBICAO.minutos * 60_000);
   return deslocado.toISOString().slice(0, 19) + FUSO_EXIBICAO.rotulo;
+}
+
+// SPEC-005: limite por reserva e por sequência encostada do mesmo professor na mesma sala.
+const DURACAO_MAXIMA_MS = 4 * 60 * 60_000;
+const ERRO_DURACAO = 'Reserva não realizada por período acima de 4 horas';
+const ERRO_ENCOSTADA = 'Reserva não realizada: você já tem uma reserva nesta sala em seguida';
+
+// Sem login, o professor é o texto de `responsavel`: ignora maiúsculas e espaços nas pontas, mantém acentos.
+// O que não é texto (ex.: número) vira texto com JSON.stringify. Estruturas aninhadas em milhares de níveis ainda
+// causam erro; recusar `responsavel` que não é texto fica para a SPEC de login.
+function chaveDoResponsavel(valor) {
+  return (typeof valor === 'string' ? valor : JSON.stringify(valor)).trim().toLowerCase();
+}
+
+// Duração do pedido somada às reservas encostadas nele, antes e depois, em sequência.
+// `proprias` são as reservas do mesmo professor na mesma sala, já sem sobreposição com o pedido.
+function duracaoDaSequencia(proprias, inicio, fim) {
+  const porFim = new Map(proprias.map((r) => [Date.parse(r.fim), Date.parse(r.inicio)]));
+  const porInicio = new Map(proprias.map((r) => [Date.parse(r.inicio), Date.parse(r.fim)]));
+  let comeco = inicio.getTime();
+  let termino = fim.getTime();
+  while (porFim.has(comeco)) comeco = porFim.get(comeco);
+  while (porInicio.has(termino)) termino = porInicio.get(termino);
+  return termino - comeco;
 }
 
 /**
@@ -70,6 +94,9 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
     };
   }
 
+  // SPEC-005 CA-1 a CA-7 e CA-21: a duração é conferida depois do passado e antes da sobreposição.
+  if (fim - inicio > DURACAO_MAXIMA_MS) return { status: 400, erro: ERRO_DURACAO };
+
   // CA-2 (SPEC-001): sobreposição na mesma sala é 409. Horário encostado (fim == início) não conflita.
   const conflito = reservas.find(
     (r) => r.sala === pedido.sala && inicio < new Date(r.fim) && fim > new Date(r.inicio),
@@ -77,6 +104,11 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
   if (conflito) {
     return { status: 409, erro: `Conflito: ${pedido.sala} já está reservada de ${formatarNoFusoDaFaculdade(conflito.inicio)} até ${formatarNoFusoDaFaculdade(conflito.fim)}` };
   }
+
+  // SPEC-005 CA-8 em diante: encostar não é sobreposição, mas o mesmo professor não passa de 4h em sequência.
+  const chave = chaveDoResponsavel(pedido.responsavel);
+  const proprias = reservas.filter((r) => r.sala === pedido.sala && chaveDoResponsavel(r.responsavel) === chave);
+  if (duracaoDaSequencia(proprias, inicio, fim) > DURACAO_MAXIMA_MS) return { status: 409, erro: ERRO_ENCOSTADA };
 
   const reserva = {
     id: reservas.reduce((maior, r) => Math.max(maior, r.id), 0) + 1, // não repete id mesmo com reservas removidas
