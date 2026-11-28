@@ -9,4 +9,5 @@ As regras do projeto valem para qualquer agente e estão em AGENTS.md:
 - Subagentes do projeto em `.claude/agents/`: `planejador`, `construtor` e `revisor`. Depois de implementar, chame o `revisor`.
 - Skill `escrever-teste` em `.claude/skills/`: use sempre que for escrever teste.
 - Comando `/revisar-spec <arquivo>` critica uma SPEC antes de virar código.
+- Skill `/entregar` organiza os commits, faz o push e abre o PR, com confirmação a cada etapa. Só roda quando a pessoa digita o comando.
 - O hook em `.claude/settings.json` bloqueia segredo. Se ele recusar uma escrita, não tente contornar: troque por variável de ambiente.
