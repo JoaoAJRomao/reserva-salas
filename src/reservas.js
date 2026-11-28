@@ -1,9 +1,14 @@
-// Regras de reserva de salas (SPEC-001, SPEC-004 e SPEC-005).
-// Funções puras: recebem os dados e devolvem um resultado { status, reserva | erro }.
+// Regras de reserva de salas (SPEC-001, SPEC-002, SPEC-004 e SPEC-005).
+// Funções puras: recebem os dados e devolvem um resultado { status, ... } com os dados ou um erro.
 // Não leem relógio nem banco por conta própria, por isso são fáceis de testar.
 import { salaExiste } from './salas.js';
 
 const CAMPOS_OBRIGATORIOS = ['sala', 'inicio', 'fim', 'responsavel'];
+
+const textoEmBranco = (valor) => typeof valor === 'string' && valor.trim() === '';
+
+// SPEC-002: a reserva cancelada continua guardada, para o id não ser reaproveitado, mas não vale para mais nada.
+const reservasAtivas = (reservas) => reservas.filter((r) => !r.cancelada);
 
 // CA-4: ISO 8601 com hora e fuso obrigatórios (Z ou ±hh:mm). Sem fuso o JS adivinharia o do servidor.
 // Captura ano, mês, dia e hora para o CA-5.
@@ -58,12 +63,13 @@ function duracaoDaSequencia(proprias, inicio, fim) {
  * @param {object} filtro   { salas } com os valores do parâmetro ?sala= ([] = sem filtro)
  */
 export function listarReservas(reservas, { salas = [] } = {}) {
-  if (salas.length === 0) return { status: 200, reservas }; // CA-4
+  const ativas = reservasAtivas(reservas);
+  if (salas.length === 0) return { status: 200, reservas: ativas }; // CA-4
   if (salas.length > 1) return { status: 400, erro: 'Informe uma única sala' }; // CA-7
   const [sala] = salas;
   // CA-3, CA-5, CA-6: o id é exato; vazio e maiúsculas não existem.
   if (!salaExiste(sala)) return { status: 404, erro: `Sala não encontrada: ${sala}` };
-  return { status: 200, reservas: reservas.filter((r) => r.sala === sala) }; // CA-1, CA-2
+  return { status: 200, reservas: ativas.filter((r) => r.sala === sala) }; // CA-1, CA-2
 }
 
 /**
@@ -73,7 +79,10 @@ export function listarReservas(reservas, { salas = [] } = {}) {
  * @param {Date} agora      momento atual (injetado para o teste controlar o tempo)
  */
 export function criarReserva(reservas, pedido, agora = new Date()) {
-  const faltando = CAMPOS_OBRIGATORIOS.filter((campo) => !pedido?.[campo]);
+  // SPEC-002 CA-17: nome só com espaços vale como campo ausente.
+  const faltando = CAMPOS_OBRIGATORIOS.filter(
+    (campo) => !pedido?.[campo] || (campo === 'responsavel' && textoEmBranco(pedido[campo])),
+  );
   if (faltando.length) return { status: 400, erro: `Campos obrigatórios: ${faltando.join(', ')}` };
 
   if (!salaExiste(pedido.sala)) return { status: 404, erro: `Sala não encontrada: ${pedido.sala}` };
@@ -98,7 +107,8 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
   if (fim - inicio > DURACAO_MAXIMA_MS) return { status: 400, erro: ERRO_DURACAO };
 
   // CA-2 (SPEC-001): sobreposição na mesma sala é 409. Horário encostado (fim == início) não conflita.
-  const conflito = reservas.find(
+  const ativas = reservasAtivas(reservas);
+  const conflito = ativas.find(
     (r) => r.sala === pedido.sala && inicio < new Date(r.fim) && fim > new Date(r.inicio),
   );
   if (conflito) {
@@ -107,7 +117,7 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
 
   // SPEC-005 CA-8 em diante: encostar não é sobreposição, mas o mesmo professor não passa de 4h em sequência.
   const chave = chaveDoResponsavel(pedido.responsavel);
-  const proprias = reservas.filter((r) => r.sala === pedido.sala && chaveDoResponsavel(r.responsavel) === chave);
+  const proprias = ativas.filter((r) => r.sala === pedido.sala && chaveDoResponsavel(r.responsavel) === chave);
   if (duracaoDaSequencia(proprias, inicio, fim) > DURACAO_MAXIMA_MS) return { status: 409, erro: ERRO_ENCOSTADA };
 
   const reserva = {
@@ -118,4 +128,32 @@ export function criarReserva(reservas, pedido, agora = new Date()) {
     responsavel: pedido.responsavel,
   };
   return { status: 201, reserva };
+}
+
+/**
+ * Tenta cancelar uma reserva (SPEC-002). Não altera a lista: no sucesso, devolve em `cancelada`
+ * a versão marcada, para quem chamou guardar no lugar da original.
+ * @param {Array} reservas  reservas que já existem, inclusive as canceladas
+ * @param {object} alvo     { id, pedido }: o id como veio na URL e o corpo { responsavel }
+ * @param {Date} agora      momento atual (injetado para o teste controlar o tempo)
+ */
+export function cancelarReserva(reservas, { id, pedido }, agora = new Date()) {
+  const responsavel = pedido?.responsavel;
+  if (responsavel === undefined || responsavel === null || textoEmBranco(responsavel)) {
+    return { status: 400, erro: 'Campos obrigatórios: responsavel' }; // CA-9
+  }
+  // CA-18: diferente da criação, 0 e false aqui são erro de tipo, e não campo ausente.
+  if (typeof responsavel !== 'string') return { status: 400, erro: 'O campo responsavel precisa ser um texto.' };
+
+  // CA-6 a CA-8: o id é comparado como texto, então '01', '1.0' e '+1' não são a reserva 1.
+  const reserva = reservasAtivas(reservas).find((r) => String(r.id) === id);
+  if (!reserva) return { status: 404, erro: 'Reserva não encontrada. Impossível cancelar.' };
+
+  if (chaveDoResponsavel(reserva.responsavel) !== chaveDoResponsavel(responsavel)) {
+    return { status: 403, erro: 'Não é responsável pela reserva. Solicitação não realizada.' };
+  }
+  // CA-11 a CA-13: no instante exato do início ainda pode cancelar.
+  if (agora > new Date(reserva.inicio)) return { status: 403, erro: 'Reserva iniciada não permite ser cancelada.' };
+
+  return { status: 200, mensagem: 'Reserva cancelada com sucesso.', cancelada: { ...reserva, cancelada: true } };
 }

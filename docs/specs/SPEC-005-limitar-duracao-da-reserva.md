@@ -119,6 +119,9 @@ Decididas:
 Pendência para a SPEC de login (não bloqueia nenhum critério): `responsavel` que não é texto (ex.: `123`) ou que tem só
 espaços continua aceito, como hoje. A comparação trata o valor como texto, e um número não pode causar erro.
 
+> **Alterado pela SPEC-002:** `responsavel` só com espaços deixa de ser aceito (400, SPEC-002 CA-17), quando a
+> SPEC-002 for aprovada e implementada. A parte sobre `responsavel` que não é texto continua valendo.
+
 Precisão: a duração é medida em milissegundos. Frações menores são ignoradas, então um fim em `12:00:00.0001` é lido
 como `12:00:00` (4h exatas) e aceito.
 

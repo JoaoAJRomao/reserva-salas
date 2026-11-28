@@ -1,7 +1,7 @@
 // Camada HTTP: só traduz requisição em chamada de função e resultado em resposta.
 // A regra de negócio mora em reservas.js.
 import { SALAS } from './salas.js';
-import { criarReserva, listarReservas } from './reservas.js';
+import { cancelarReserva, criarReserva, listarReservas } from './reservas.js';
 
 export function criarApp({ agora = () => new Date() } = {}) {
   const reservas = [];
@@ -19,6 +19,14 @@ export function criarApp({ agora = () => new Date() } = {}) {
         const resultado = criarReserva(reservas, pedido, agora());
         if (resultado.reserva) reservas.push(resultado.reserva);
         return responder(res, resultado.status, resultado.reserva ?? { erro: resultado.erro });
+      }
+      const rotaDaReserva = /^\/reservas\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'DELETE' && rotaDaReserva) {
+        const pedido = await lerJson(req);
+        const resultado = cancelarReserva(reservas, { id: rotaDaReserva[1], pedido }, agora());
+        const { cancelada } = resultado;
+        if (cancelada) reservas[reservas.findIndex((r) => r.id === cancelada.id)] = cancelada;
+        return responder(res, resultado.status, cancelada ? { mensagem: resultado.mensagem } : { erro: resultado.erro });
       }
       return responder(res, 404, { erro: 'Rota não encontrada' });
     } catch (e) {

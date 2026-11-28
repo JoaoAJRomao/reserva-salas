@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { criarReserva, listarReservas } from '../src/reservas.js';
+import * as regras from '../src/reservas.js';
 
 const AGORA = new Date('2026-12-01T08:00:00-03:00');
 const pedido = (extra = {}) => ({
@@ -400,4 +401,148 @@ test('SPEC-005 CA-25: fração abaixo de 1 milissegundo é ignorada', () => {
 test('SPEC-005 CA-26: encostadas na virada do dia que somam 5h recebem 409', () => {
   const lista = [guardada('21:00', '2026-12-02T00:00:00-03:00')];
   recusada(pedir('2026-12-02T00:00:00-03:00', '2026-12-02T02:00:00-03:00', { lista }), 409, MENSAGEM_B);
+});
+
+// SPEC-002: cancelar reserva. Salvo indicação, agora é 30/11 às 08h e a reserva 1, de Carlos, é do lab-1 das 14h às 16h.
+// As reservas existentes são objetos prontos, porque não dá para criar reserva no passado.
+const MENSAGEM_S = 'Reserva cancelada com sucesso.';
+const MENSAGEM_D = 'Não é responsável pela reserva. Solicitação não realizada.';
+const MENSAGEM_I = 'Reserva iniciada não permite ser cancelada.';
+const MENSAGEM_N = 'Reserva não encontrada. Impossível cancelar.';
+const OBRIGATORIO = 'Campos obrigatórios: responsavel';
+const PRECISA_SER_TEXTO = 'O campo responsavel precisa ser um texto.';
+
+const item = (id, inicio, fim, responsavel, sala = 'lab-1') => ({ ...guardada(inicio, fim, responsavel, sala), id });
+const reserva1 = () => item(1, '14:00', '16:00', 'Carlos');
+
+const cancelar = (lista, { id = '1', responsavel = 'Carlos', corpo = { responsavel }, agora = AGORA_005 } = {}) =>
+  regras.cancelarReserva(lista, { id, pedido: corpo }, agora);
+
+// Faz o que a camada HTTP faz no sucesso: troca a reserva pela versão cancelada.
+const aplicar = (lista, r) => {
+  assert.equal(r.status, 200, r.erro);
+  assert.equal(r.mensagem, MENSAGEM_S);
+  return lista.map((x) => (x.id === r.cancelada.id ? r.cancelada : x));
+};
+
+const negada = (lista, opcoes, status, mensagem) => {
+  const antes = structuredClone(lista);
+  const r = cancelar(lista, opcoes);
+  assert.equal(r.status, status);
+  assert.equal(r.erro, mensagem);
+  assert.equal(r.cancelada, undefined);
+  assert.deepEqual(lista, antes);
+};
+
+const idsListados = (lista, salas = []) => listarReservas(lista, { salas }).reservas.map((r) => r.id);
+
+test('SPEC-002 CA-1: o dono cancela, e a reserva some da lista com e sem filtro', () => {
+  const lista = [reserva1()];
+  const r = cancelar(lista);
+  assert.deepEqual(lista, [reserva1()]); // a função não altera a lista recebida
+  const depois = aplicar(lista, r);
+  assert.deepEqual(idsListados(depois), []);
+  assert.deepEqual(idsListados(depois, ['lab-1']), []);
+});
+
+test('SPEC-002 CA-2: o horário cancelado pode ser reservado por outra pessoa', () => {
+  const lista = [reserva1()];
+  const depois = aplicar(lista, cancelar(lista));
+  aceita(pedir('14:00', '16:00', { lista: depois, responsavel: 'Bruno' }));
+});
+
+test('SPEC-002 CA-3: outra pessoa recebe 403 e a reserva continua guardada', () => {
+  negada([reserva1()], { responsavel: 'Ana' }, 403, MENSAGEM_D);
+});
+
+test('SPEC-002 CA-4: minúsculas e espaço no fim são o mesmo dono', () => {
+  const lista = [reserva1()];
+  assert.deepEqual(idsListados(aplicar(lista, cancelar(lista, { responsavel: 'carlos ' }))), []);
+});
+
+test('SPEC-002 CA-5: nome sem acento não é o dono', () => {
+  const lista = [reserva1(), item(2, '14:00', '16:00', 'João', 'lab-2')];
+  negada(lista, { id: '2', responsavel: 'Joao' }, 403, MENSAGEM_D);
+});
+
+test('SPEC-002 CA-6: id que não existe recebe 404', () => {
+  negada([reserva1()], { id: '99' }, 404, MENSAGEM_N);
+});
+
+test('SPEC-002 CA-7: cancelar de novo recebe 404', () => {
+  const lista = [reserva1()];
+  negada(aplicar(lista, cancelar(lista)), {}, 404, MENSAGEM_N);
+});
+
+test('SPEC-002 CA-8: id escrito de outro jeito recebe 404', () => {
+  for (const id of ['abc', '0', '-1', '1.5', '01', '1.0', '+1']) negada([reserva1()], { id }, 404, MENSAGEM_N);
+});
+
+test('SPEC-002 CA-9: sem responsavel, vazio ou só com espaços recebe 400', () => {
+  for (const corpo of [{}, { responsavel: '' }, { responsavel: '   ' }]) {
+    negada([reserva1()], { corpo }, 400, OBRIGATORIO);
+  }
+});
+
+test('SPEC-002 CA-11: no instante exato do início ainda cancela', () => {
+  const lista = [reserva1()];
+  const r = cancelar(lista, { agora: new Date('2026-12-01T14:00:00-03:00') });
+  assert.deepEqual(idsListados(aplicar(lista, r)), []);
+});
+
+test('SPEC-002 CA-12: 1 milissegundo depois do início recebe 403', () => {
+  negada([reserva1()], { agora: new Date('2026-12-01T14:00:00.001-03:00') }, 403, MENSAGEM_I);
+});
+
+test('SPEC-002 CA-13: reserva encerrada recebe 403', () => {
+  negada([reserva1()], { agora: new Date('2026-12-01T17:00:00-03:00') }, 403, MENSAGEM_I);
+});
+
+test('SPEC-002 CA-14: de outra pessoa e já iniciada recebe a mensagem de dono', () => {
+  negada([reserva1()], { responsavel: 'Ana', agora: new Date('2026-12-01T15:00:00-03:00') }, 403, MENSAGEM_D);
+});
+
+test('SPEC-002 CA-15: a reserva cancelada sai da soma de 4 horas', () => {
+  const lista = [reserva1(), item(2, '08:00', '09:00', 'Ana'), item(3, '09:00', '10:00', 'Ana'), item(4, '10:00', '12:00', 'Ana')];
+  const depois = aplicar(lista, cancelar(lista, { id: '3', responsavel: 'Ana' }));
+  aceita(pedir('12:00', '14:00', { lista: depois }));
+});
+
+test('SPEC-002 CA-16: o id da reserva cancelada não é reaproveitado', () => {
+  const lista = [reserva1(), item(2, '14:00', '16:00', 'Ana', 'lab-2')];
+  const depois = aplicar(lista, cancelar(lista, { id: '2', responsavel: 'Ana' }));
+  const r = pedir('14:00', '16:00', { lista: depois, responsavel: 'Bruno', sala: 'lab-2' });
+  aceita(r);
+  assert.equal(r.reserva.id, 3);
+});
+
+test('SPEC-002 CA-17: criar com responsavel só com espaços recebe 400', () => {
+  recusada(pedir('14:00', '16:00', { responsavel: '   ' }), 400, OBRIGATORIO);
+});
+
+test('SPEC-002 CA-18: responsavel que não é texto recebe 400', () => {
+  for (const responsavel of [123, 0, false, ['123'], { nome: '123' }]) {
+    negada([item(1, '14:00', '16:00', 123)], { corpo: { responsavel } }, 400, PRECISA_SER_TEXTO);
+  }
+});
+
+test('SPEC-002 CA-19: reserva guardada com número é cancelada com o texto', () => {
+  const lista = [item(1, '14:00', '16:00', 123)];
+  assert.deepEqual(idsListados(aplicar(lista, cancelar(lista, { responsavel: '123' }))), []);
+});
+
+test('SPEC-002 CA-20: reserva guardada com true ou lista é cancelada com o texto em JSON', () => {
+  for (const [guardado, texto] of [[true, 'true'], [['Ana'], '["Ana"]']]) {
+    const lista = [item(1, '14:00', '16:00', guardado)];
+    assert.deepEqual(idsListados(aplicar(lista, cancelar(lista, { responsavel: texto }))), []);
+  }
+});
+
+test('SPEC-002 CA-9: responsavel null vale como campo ausente', () => {
+  negada([reserva1()], { corpo: { responsavel: null } }, 400, OBRIGATORIO);
+});
+
+test('SPEC-002 CA-9 e CA-18: erro nos dados vem antes da busca pela reserva', () => {
+  negada([reserva1()], { id: '99', corpo: {} }, 400, OBRIGATORIO);
+  negada([reserva1()], { id: '99', responsavel: 123 }, 400, PRECISA_SER_TEXTO);
 });
